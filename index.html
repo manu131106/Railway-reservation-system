@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Railway Reservation — Demo</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html { scroll-behavior: smooth; }
+    .seat { width:36px; height:36px; display:inline-flex; align-items:center; justify-content:center; border-radius:6px; cursor:pointer; }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+  <div id="root" class="min-h-screen"></div>
+
+  <!-- React -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel">
+  const { useState, useEffect } = React;
+
+  /***********************
+   * Utilities
+   ***********************/
+  function randInt(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
+  function makePNR(){
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let s="";
+    for(let i=0;i<10;i++) s+=chars[Math.floor(Math.random()*chars.length)];
+    return s;
+  }
+  function formatDateInput(d){ // yyyy-mm-dd -> readable
+    if(!d) return '';
+    const dt = new Date(d + 'T00:00:00');
+    return dt.toLocaleDateString();
+  }
+
+  /***********************
+   * Sample trains DB (mock)
+   ***********************/
+  const SAMPLE_TRAINS = [
+    { id:'T101', name:'Express One', from:'Pune', to:'Mumbai', depart:'06:30', arrive:'10:15', duration:'3h 45m', classes: [{code:'1A', price:1500},{code:'2A',price:900},{code:'SL',price:300}] },
+    { id:'T102', name:'Coastal Mail', from:'Pune', to:'Mumbai', depart:'09:15', arrive:'13:10', duration:'3h 55m', classes: [{code:'2A',price:950},{code:'3A',price:600},{code:'SL',price:320}] },
+    { id:'T201', name:'InterCity', from:'Pune', to:'Mumbai', depart:'14:00', arrive:'17:00', duration:'3h 0m', classes:[{code:'CC',price:400},{code:'SL',price:280}] },
+    { id:'T301', name:'Night Star', from:'Mumbai', to:'Pune', depart:'22:10', arrive:'02:30', duration:'4h 20m', classes:[{code:'1A',price:1600},{code:'2A',price:950},{code:'SL',price:310}] }
+  ];
+
+  /***********************
+   * LocalStorage helpers
+   ***********************/
+  function loadBookings() {
+    try { return JSON.parse(localStorage.getItem('rail_bookings') || '[]'); } catch(e){ return []; }
+  }
+  function saveBooking(b) {
+    const arr = loadBookings();
+    arr.unshift(b);
+    localStorage.setItem('rail_bookings', JSON.stringify(arr));
+  }
+  function loadUsers(){ try { return JSON.parse(localStorage.getItem('rail_users')||'[]'); } catch(e){ return [] } }
+  function saveUser(u){
+    const arr = loadUsers();
+    arr.unshift(u);
+    localStorage.setItem('rail_users', JSON.stringify(arr));
+  }
+
+  /***********************
+   * Components
+   ***********************/
+  function Header({onOpenLogin, onOpenRegister, user, onNavigate}) {
+    return (
+      <header className="bg-white shadow-sm">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 to-rose-500 flex items-center justify-center text-white font-bold">IR</div>
+            <div>
+              <div className="font-bold text-lg">Railway Demo</div>
+              <div className="text-xs text-gray-500">Reservation system (demo)</div>
+            </div>
+          </div>
+
+          <nav className="flex items-center gap-3">
+            <button onClick={()=>onNavigate('home')} className="text-sm hover:underline">Home</button>
+            <button onClick={()=>onNavigate('search')} className="text-sm hover:underline">Search</button>
+            <button onClick={()=>onNavigate('profile')} className="text-sm hover:underline">Profile</button>
+
+            {user ? (
+              <div className="flex items-center gap-2 border px-3 py-2 rounded-lg">
+                <div className="text-sm">{user.name}</div>
+                <button onClick={()=>{ localStorage.removeItem('rail_session'); window.location.reload(); }} className="text-sm text-red-500">Logout</button>
+              </div>
+            ) : (
+              <>
+                <button onClick={onOpenLogin} className="px-3 py-2 rounded border text-sm">Login</button>
+                <button onClick={onOpenRegister} className="px-3 py-2 rounded bg-indigo-600 text-white text-sm">Register</button>
+              </>
+            )}
+          </nav>
+        </div>
+      </header>
+    );
+  }
+
+  function Home() {
+    return (
+      <section className="max-w-6xl mx-auto px-6 py-10">
+        <div className="grid md:grid-cols-2 gap-8 items-center">
+          <div>
+            <h1 className="text-4xl font-bold">Book Indian Railway-style tickets — Demo</h1>
+            <p className="mt-4 text-gray-600">Search trains, choose seats, and complete booking. This demo stores reservations in your browser.</p>
+            <ul className="mt-6 space-y-2 text-sm text-gray-700">
+              <li>• Click Search → choose train → Select seats → Book</li>
+              <li>• Bookings are saved locally (no real payments)</li>
+            </ul>
+          </div>
+          <div className="p-6 bg-white rounded-xl shadow">
+            <div className="text-sm text-gray-500">Demo quick tips</div>
+            <div className="mt-4 grid grid-cols-2 gap-4">
+              <div className="p-3 rounded border">From: Pune</div>
+              <div className="p-3 rounded border">To: Mumbai</div>
+              <div className="p-3 rounded border">Date: pick any upcoming date</div>
+              <div className="p-3 rounded border">Seats: choose available seats</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  function Search({onSelectTrain}) {
+    const [from, setFrom] = useState('Pune');
+    const [to, setTo] = useState('Mumbai');
+    const [date, setDate] = useState('');
+    const [results, setResults] = useState([]);
+
+    function search(){
+      // simple filter: match from & to (ignores date, but we show date)
+      const res = SAMPLE_TRAINS.filter(t => t.from.toLowerCase()===from.toLowerCase() && t.to.toLowerCase()===to.toLowerCase());
+      // attach random availability snapshot (simulate seat occupancy)
+      const withAvail = res.map(t => {
+        const classes = t.classes.map(c => ({...c, available: randInt(5,80)}));
+        return {...t, classes};
+      });
+      setResults(withAvail);
+    }
+
+    useEffect(()=>{ search(); }, []);
+
+    return (
+      <section className="max-w-6xl mx-auto px-6 py-10">
+        <div className="bg-white p-6 rounded-xl shadow">
+          <div className="grid md:grid-cols-4 gap-3 items-end">
+            <div>
+              <label className="text-xs text-gray-500">From</label>
+              <input value={from} onChange={e=>setFrom(e.target.value)} className="mt-1 block w-full px-3 py-2 rounded border" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">To</label>
+              <input value={to} onChange={e=>setTo(e.target.value)} className="mt-1 block w-full px-3 py-2 rounded border" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">Journey date</label>
+              <input value={date} onChange={e=>setDate(e.target.value)} type="date" className="mt-1 block w-full px-3 py-2 rounded border" />
+            </div>
+            <div>
+              <button onClick={search} className="w-full px-4 py-2 rounded bg-indigo-600 text-white">Search trains</button>
+            </div>
+          </div>
+
+          <div className="mt-6 space-y-4">
+            {results.length===0 && <div className="text-sm text-gray-500">No trains for this route.</div>}
+            {results.map((t) => (
+              <div key={t.id} className="p-4 border rounded flex items-center justify-between">
+                <div>
+                  <div className="font-semibold">{t.name} <span className="text-xs text-gray-500">({t.id})</span></div>
+                  <div className="text-sm text-gray-600">{t.from} → {t.to} • {t.depart} - {t.arrive} • {t.duration}</div>
+                  <div className="mt-2 text-sm flex items-center gap-3">
+                    {t.classes.map(c => (<div key={c.code} className="text-xs px-2 py-1 border rounded">{c.code} ₹{c.price} • Avl {c.available}</div>))}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <button onClick={()=>onSelectTrain({...t, date})} className="px-3 py-2 rounded bg-green-600 text-white text-sm">Select seats</button>
+                  <button onClick={()=>alert('View details not implemented in demo')} className="px-3 py-2 rounded border text-sm">Details</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  function SeatMapModal({train, onClose, onBook, user}) {
+    // simple seat map: 6 columns (A-F) x 10 rows = 60 seats
+    const cols = ['A','B','C','D','E','F'];
+    const rows = Array.from({length:10},(_,i)=>i+1);
+    const totalSeats = cols.length * rows.length;
+    const [occupied, setOccupied] = useState(new Set()); // occupied by others
+    const [selected, setSelected] = useState([]);
+    const [seatClass, setSeatClass] = useState(train.classes[0]?.code || '');
+
+    useEffect(()=>{
+      // simulate random occupied seats for this train/date/class
+      const occ = new Set();
+      const initial = randInt(4,18);
+      while(occ.size < initial) occ.add(randInt(1,totalSeats));
+      setOccupied(occ);
+      setSelected([]);
+    }, [train]);
+
+    function seatId(r,cIdx){ return `${r}${cols[cIdx]}`; }
+    function seatIndex(r,cIdx){ return (r-1)*cols.length + cIdx + 1; }
+
+    function toggleSeat(r,cIdx){
+      const idx = seatIndex(r,cIdx);
+      if(occupied.has(idx)) return;
+      if(selected.includes(idx)){
+        setSelected(s=>s.filter(x=>x!==idx));
+      } else {
+        setSelected(s=> [...s, idx].slice(-6)); // limit max 6 seats per booking
+      }
+    }
+
+    function doBook(){
+      if(selected.length===0){ alert('Select at least one seat'); return; }
+      if(!user){ alert('Please login/register to book'); return; }
+      // Build passenger list (dummy): prompt names quickly
+      const passengers = selected.map((seatIdx,i)=>({
+        name: prompt(`Passenger ${i+1} name`, user.name || `Passenger${i+1}`) || `Passenger${i+1}`,
+        age: prompt(`Passenger ${i+1} age`, '25') || '25',
+        seat: (() => {
+          // convert seatIdx to r & col
+          const r = Math.ceil(seatIdx / cols.length);
+          const cIdx = (seatIdx - 1) % cols.length;
+          return seatId(r,cIdx);
+        })()
+      }));
+
+      const costPer = train.classes.find(c=>c.code===seatClass)?.price || train.classes[0].price;
+      const totalFare = costPer * passengers.length;
+
+      const pnr = makePNR();
+      const booking = {
+        pnr, trainId: train.id, trainName: train.name, from: train.from, to: train.to,
+        date: train.date || train.journeyDate || '', class: seatClass, passengers, totalFare, createdAt: new Date().toISOString()
+      };
+      // mark those seats as occupied locally (simulate)
+      const newOcc = new Set(occupied);
+      selected.forEach(s=>newOcc.add(s));
+      setOccupied(newOcc);
+      setSelected([]);
+      onBook(booking);
+      onClose();
+    }
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="absolute inset-0 bg-black/50" onClick={onClose}></div>
+        <div className="relative w-full max-w-3xl bg-white dark:bg-gray-900 rounded-xl p-6 shadow-xl overflow-auto" style={{maxHeight:'90vh'}}>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="font-semibold text-lg">{train.name} ({train.id})</div>
+              <div className="text-sm text-gray-600">{train.from} → {train.to} • {train.depart} - {train.arrive}</div>
+              <div className="text-xs text-gray-500 mt-1">Date: {formatDateInput(train.date)}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-sm">Choose class</div>
+              <select value={seatClass} onChange={e=>setSeatClass(e.target.value)} className="mt-1 px-2 py-1 border rounded">
+                {train.classes.map(c=> <option key={c.code} value={c.code}>{c.code} — ₹{c.price}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-6 gap-4">
+            {/* seat map column headers */}
+            {cols.map((col)=> <div key={col} className="text-sm font-medium text-center">{col}</div>)}
+          </div>
+
+          <div className="mt-2 grid gap-2">
+            {rows.map(r => (
+              <div key={r} className="flex gap-2">
+                {cols.map((c, cIdx) => {
+                  const idx = seatIndex(r,cIdx);
+                  const sId = seatId(r,cIdx);
+                  const isOcc = occupied.has(idx);
+                  const isSel = selected.includes(idx);
+                  return (
+                    <div key={cIdx} title={sId}
+                      onClick={()=>toggleSeat(r,cIdx)}
+                      className={`seat ${isOcc ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : isSel ? 'bg-green-600 text-white' : 'bg-white border'} `}
+                      >
+                      {sId}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 flex items-center justify-between">
+            <div className="text-sm">
+              <div>Selected seats: <span className="font-medium">{selected.length}</span></div>
+              <div className="text-xs text-gray-500">Click seats to select (max 6). Gray = occupied.</div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button onClick={onClose} className="px-3 py-2 rounded border">Cancel</button>
+              <button onClick={doBook} className="px-4 py-2 rounded bg-indigo-600 text-white">Book {selected.length>0 && `(${selected.length})`}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function Profile({user}) {
+    const [bookings, setBookings] = useState([]);
+    useEffect(()=> setBookings(loadBookings()), []);
+    return (
+      <section className="max-w-6xl mx-auto px-6 py-10">
+        <div className="bg-white p-6 rounded-xl shadow">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-bold text-lg">My Bookings</h3>
+              <div className="text-sm text-gray-500">Saved in your browser</div>
+            </div>
+            <div className="text-sm text-gray-500">User: {user?.name || 'Guest'}</div>
+          </div>
+
+          <div className="mt-6 space-y-4">
+            {bookings.length===0 && <div className="text-gray-500">You have no bookings yet.</div>}
+            {bookings.map(b => (
+              <div key={b.pnr} className="p-4 border rounded flex items-center justify-between">
+                <div>
+                  <div className="font-semibold">{b.trainName} • {b.from}→{b.to} • {formatDateInput(b.date)}</div>
+                  <div className="text-sm text-gray-600">PNR: <span className="font-mono">{b.pnr}</span> • Class: {b.class} • ₹{b.totalFare}</div>
+                  <div className="text-xs text-gray-600 mt-1">Passengers: {b.passengers.map(p=>p.name).join(', ')}</div>
+                </div>
+                <div className="flex flex-col gap-2 items-end">
+                  <button onClick={()=>{ navigator.clipboard?.writeText(b.pnr); alert('PNR copied') }} className="px-3 py-1 rounded border text-sm">Copy PNR</button>
+                  <button onClick={()=>{
+                    if(confirm('Cancel booking? This demo will just remove it locally.')){
+                      const all = loadBookings().filter(x=>x.pnr!==b.pnr);
+                      localStorage.setItem('rail_bookings', JSON.stringify(all));
+                      setBookings(all);
+                    }
+                  }} className="px-3 py-1 rounded border text-sm text-red-500">Cancel</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  function LoginRegisterModal({type,onClose,onLogin}) {
+    const [name,setName]=useState(''); const [email,setEmail]=useState(''); const [pass,setPass]=useState('');
+
+    function doRegister(e){
+      e.preventDefault();
+      if(!name||!email||!pass) { alert('Fill all fields'); return; }
+      // store user locally
+      saveUser({name,email,pass,createdAt: new Date().toISOString()});
+      localStorage.setItem('rail_session', JSON.stringify({name,email}));
+      onLogin({name,email});
+      onClose();
+    }
+    function doLogin(e){
+      e.preventDefault();
+      const users = loadUsers();
+      const found = users.find(u=>u.email===email && u.pass===pass);
+      if(!found){ alert('Invalid credentials (demo)'); return; }
+      localStorage.setItem('rail_session', JSON.stringify({name: found.name, email: found.email}));
+      onLogin({name: found.name, email: found.email});
+      onClose();
+    }
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="absolute inset-0 bg-black/40" onClick={onClose}></div>
+        <div className="relative w-full max-w-md p-6 bg-white rounded-xl shadow-lg">
+          <div className="flex justify-between items-center">
+            <div>
+              <h4 className="font-semibold">{type==='login' ? 'Login' : 'Register'}</h4>
+              <div className="text-xs text-gray-500">{type==='login' ? 'Enter your credentials' : 'Create a demo account'}</div>
+            </div>
+            <button onClick={onClose} className="text-gray-500">✕</button>
+          </div>
+
+          <form onSubmit={type==='login' ? doLogin : doRegister} className="mt-4 grid gap-3">
+            {type==='register' && <input placeholder="Full name" value={name} onChange={e=>setName(e.target.value)} className="px-3 py-2 border rounded" required />}
+            <input placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} className="px-3 py-2 border rounded" type="email" required />
+            <input placeholder="Password" value={pass} onChange={e=>setPass(e.target.value)} className="px-3 py-2 border rounded" type="password" required />
+            <div className="flex items-center gap-2">
+              <button type="submit" className="px-4 py-2 rounded bg-indigo-600 text-white">{type==='login'?'Login':'Register'}</button>
+              <button type="button" onClick={()=>{ if(type==='login') { /* switch to register by re-render in parent */ } }} className="px-3 py-2 rounded border">Switch</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  /***********************
+   * Root App
+   ***********************/
+  function App(){
+    const [page, setPage] = useState('home'); // home, search, profile
+    const [trainToBook, setTrainToBook] = useState(null);
+    const [showSeatModal, setShowSeatModal] = useState(false);
+    const [user, setUser] = useState(null);
+    const [showAuth, setShowAuth] = useState(null); // 'login'|'register'|null
+
+    useEffect(()=>{
+      const sess = localStorage.getItem('rail_session');
+      if(sess) try { setUser(JSON.parse(sess)); } catch(e){}
+    }, []);
+
+    function handleSelectTrain(t){
+      setTrainToBook(t);
+      setShowSeatModal(true);
+    }
+
+    function handleBook(booking){
+      // persist and show confirmation
+      saveBooking(booking);
+      alert('Booked! PNR: ' + booking.pnr);
+      setPage('profile');
+    }
+
+    function handleLogin(u){
+      setUser(u);
+    }
+
+    return (
+      <div>
+        <Header onOpenLogin={()=>setShowAuth('login')} onOpenRegister={()=>setShowAuth('register')} user={user} onNavigate={setPage} />
+
+        <main>
+          {page==='home' && <Home />}
+          {page==='search' && <Search onSelectTrain={handleSelectTrain} />}
+          {page==='profile' && <Profile user={user} />}
+        </main>
+
+        {/* Seat modal */}
+        {showSeatModal && trainToBook && (
+          <SeatMapModal train={trainToBook} onClose={()=>setShowSeatModal(false)} onBook={handleBook} user={user} />
+        )}
+
+        {/* Auth modal */}
+        {showAuth && (
+          <LoginRegisterModal type={showAuth} onClose={()=>setShowAuth(null)} onLogin={handleLogin} />
+        )}
+
+        <footer className="mt-10 py-6 text-center text-xs text-gray-500">
+          Demo — not for production. Bookings saved locally in your browser.
+        </footer>
+      </div>
+    );
+  }
+
+  // mount
+  const root = ReactDOM.createRoot(document.getElementById('root'));
+  root.render(<App />);
+  </script>
+</body>
+</html>
